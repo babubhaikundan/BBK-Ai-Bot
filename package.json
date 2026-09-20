@@ -1,0 +1,17 @@
+{
+  "name": "bbk-ai-bot",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "webhook:set": "node scripts/set-webhook.js",
+    "webhook:delete": "node scripts/set-webhook.js --delete"
+  },
+  "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/runner": "^2.0.3",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.30.0",
+    "mongoose": "^8.9.0"
+  }
+}
