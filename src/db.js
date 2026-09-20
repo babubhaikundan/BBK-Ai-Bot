@@ -48,6 +48,7 @@ const bizChatSchema = new Schema({
   allowed: { type: Boolean, default: null },          // null = inherit (allowAll)
   mode: { type: String, default: "" },                // "" inherit | ai | fixed | off
   fixedText: { type: String, default: "" },
+  prompt: { type: String, default: "" },              // is chat ke liye extra AI instructions
   welcomeSent: { type: Boolean, default: false },
   firstSeenAt: Date,
   lastMsgAt: Date,
@@ -67,6 +68,7 @@ const OwnerState = mongoose.model("OwnerState", new Schema({
   ownerId: { type: String, unique: true },
   connId: String,
   chatId: String,
+  kind: { type: String, default: "reply" },               // reply = custom fixed reply | prompt = AI instructions
   at: { type: Date, default: Date.now, index: { expireAfterSeconds: 900 } },
 }, opts));
 
@@ -285,8 +287,8 @@ export async function markSent(connId, chatId, msgId) {
 }
 export const wasSent = async (connId, chatId, msgId) => !!(await Processed.exists({ key: `sent:${connId}:${chatId}:${msgId}` }));
 
-export async function setAwaiting(ownerId, connId, chatId) {
-  await OwnerState.findOneAndUpdate({ ownerId: String(ownerId) }, { $set: { connId, chatId: String(chatId), at: new Date() } }, { upsert: true });
+export async function setAwaiting(ownerId, connId, chatId, kind = "reply") {
+  await OwnerState.findOneAndUpdate({ ownerId: String(ownerId) }, { $set: { connId, chatId: String(chatId), kind, at: new Date() } }, { upsert: true });
 }
 export const takeAwaiting = (ownerId) => OwnerState.findOneAndDelete({ ownerId: String(ownerId) }).lean();
 export const dropAwaiting = async (ownerId) => !!(await OwnerState.findOneAndDelete({ ownerId: String(ownerId) }));

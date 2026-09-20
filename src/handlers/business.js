@@ -43,12 +43,13 @@ export function registerBusiness(bot, { alert }) {
     await markSent(connId, chatId, m.message_id);
   };
 
-  const bizSystem = (conn) =>
+  const bizSystem = (conn, chat = {}) =>
     `You are the AI assistant of ${config.OWNER_NAME} (Kundan Yadav), replying inside his personal Telegram chats while he is unavailable. ` +
     `Say you are his AI assistant if asked (never claim to be human). Be brief, polite and helpful; reply in the customer's language (Hinglish if they write Hindi/Hinglish). ` +
     `If something needs ${config.OWNER_NAME} personally (money, meetings, private info, decisions, commitments) say you will pass the message on and he will reply soon. ` +
     `Do not invent facts about ${config.OWNER_NAME}. Keep replies short (1-4 sentences) unless asked for detail. No markdown tables or headings.` +
-    (conn.prompt ? `\n\nOwner instructions:\n${conn.prompt}` : "");
+    (conn.prompt ? `\n\nOwner instructions:\n${conn.prompt}` : "") +
+    (chat.prompt ? `\n\nInstructions for THIS specific customer chat (follow these for this customer):\n${chat.prompt}` : "");
 
   // =====================================================================
   //  business_connection
@@ -141,7 +142,7 @@ export function registerBusiness(bot, { alert }) {
     const key = `biz:${connId}:${chatId}`;
     try {
       const history = await pushMessage(key, "user", m.text, 30);
-      const ai = await askAI({ messages: history, system: bizSystem(conn), providers: config.BIZ_PROVIDERS });
+      const ai = await askAI({ messages: history, system: bizSystem(conn, chat), providers: config.BIZ_PROVIDERS });
       await pushMessage(key, "assistant", ai.text, 30);
       for (const html of renderChunks(ai.text)) await sendHtml(api, connId, m.chat.id, html);
       await setAutoReplied(connId, chatId);
@@ -197,11 +198,13 @@ ID: <code>${ch.chatId}</code>
 Automation here: <b>${on ? "ON ✅" : "OFF ⛔"}</b> ${ch.allowed == null ? "(default)" : "(explicit)"}
 Mode: <b>${MODE_LABEL[ch.mode || ""]}</b>${ch.mode ? "" : ` → ${MODE_LABEL[c.mode]}`}
 Custom reply: ${preview(ch.fixedText)}
+AI instructions: ${preview(ch.prompt)}
 Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new Date(ch.lastOwnerAt).toLocaleString("en-IN", { timeZone: config.TIMEZONE })}` : ""}`;
     const kb = new InlineKeyboard()
       .text(`${on ? "⛔ Disable" : "✅ Enable"} here`, `biz:ct:${ch.chatId}`).row()
       .text(`🔀 Mode: ${MODE_LABEL[ch.mode || ""]}`, `biz:cm:${ch.chatId}`).row()
       .text("✏️ Set custom reply", `biz:cr:${ch.chatId}`).text("🗑 Clear reply", `biz:cx:${ch.chatId}`).row()
+      .text("🧠 AI instructions", `biz:cp:${ch.chatId}`).text("🗑 Clear AI instr.", `biz:cq:${ch.chatId}`).row()
       .text("⬅️ Back", "biz:chats:0");
     return { text, kb };
   }
@@ -234,9 +237,11 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
     await ctx.reply(reply, { parse_mode: "HTML" });
   });
   const off = (s) => /^(off|none|clear)$/i.test(s);
-  setter("bizwelcome", (a) => off(a) ? [{ welcomeText: "" }, "🗑 Welcome message hata diya."] : [{ welcomeText: a.slice(0, 1000) }, "✅ Welcome message set (sirf pehle customer message par jaayega)."]);
-  setter("bizreply", (a) => off(a) ? [{ fixedText: "" }, "🗑 Default fixed reply hata diya."] : [{ fixedText: a.slice(0, 1000) }, "✅ Default fixed reply set."]);
-  setter("bizprompt", (a) => /^reset$/i.test(a) ? [{ prompt: "" }, "🗑 AI instructions reset."] : [{ prompt: a.slice(0, 2000) }, "✅ AI instructions set."]);
+  // limit se lamba text kat jaata hai — ab chup-chaap nahi, warning ke saath
+  const cutNote = (t, max) => (t.length > max ? `\n⚠️ Text ${t.length} characters ka tha, sirf pehle ${max} save hue (${t.length - max} characters cut). Chhota karke dobara bhejo.` : "");
+  setter("bizwelcome", (a) => off(a) ? [{ welcomeText: "" }, "🗑 Welcome message hata diya."] : [{ welcomeText: a.slice(0, 1000) }, "✅ Welcome message set (sirf pehle customer message par jaayega)." + cutNote(a, 1000)]);
+  setter("bizreply", (a) => off(a) ? [{ fixedText: "" }, "🗑 Default fixed reply hata diya."] : [{ fixedText: a.slice(0, 1000) }, "✅ Default fixed reply set." + cutNote(a, 1000)]);
+  setter("bizprompt", (a) => /^reset$/i.test(a) ? [{ prompt: "" }, "🗑 AI instructions reset."] : [{ prompt: a.slice(0, 2000) }, "✅ AI instructions set." + cutNote(a, 2000)]);
   const mins = (field, label) => (a) => { const n = parseInt(a, 10); return Number.isFinite(n) && n >= 0 && n <= 10080 ? [{ [field]: n }, `✅ ${label}: ${n} min`] : [null, "❌ 0-10080 ke beech minutes do."]; };
   setter("bizcool", mins("cooldownMin", "Fixed-reply cooldown"));
   setter("bizpause", mins("pauseMin", "Owner-active pause"));
@@ -288,6 +293,13 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
       }
       else if (act === "cm") ch = await updateBizChat(c.connId, chatId, { mode: NEXT_CHAT_MODE[ch.mode || ""] });
       else if (act === "cx") ch = await updateBizChat(c.connId, chatId, { fixedText: "", ...(ch.mode === "fixed" ? { mode: "" } : {}) });
+      else if (act === "cq") ch = await updateBizChat(c.connId, chatId, { prompt: "" });
+      else if (act === "cp") {
+        await setAwaiting(ctx.from.id, c.connId, chatId, "prompt");
+        await ctx.answerCallbackQuery();
+        await ctx.reply("🧠 Is chat (customer) ke liye AI instructions bhejo, jaise: \"ye mera dost hai, casual Hinglish me baat karo\" (cancel: /cancel). Ye sirf is chat pe lagenge, aur global /bizprompt ke saath judenge.");
+        return;
+      }
       else if (act === "cr") {
         await setAwaiting(ctx.from.id, c.connId, chatId);
         await ctx.answerCallbackQuery();
@@ -308,10 +320,16 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
     if (Date.now() - new Date(st.at).getTime() > 10 * 60_000) return false;
     const text = ctx.msg.text.trim();
     if (/^\/?cancel$/i.test(text)) { await ctx.reply("Cancel ho gaya."); return true; }
-    const ch = await updateBizChat(st.connId, st.chatId, { fixedText: text.slice(0, 1000), mode: "fixed", allowed: true });
     const c = await getConnection(st.connId);
+    if (st.kind === "prompt") {
+      const ch = await updateBizChat(st.connId, st.chatId, { prompt: text.slice(0, 1500) });   // mode/allowed ko nahi chhedta
+      const p = chatPanel(c, ch);
+      await ctx.reply("✅ Is chat ke liye AI instructions save ho gaye." + cutNote(text, 1500) + "\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
+      return true;
+    }
+    const ch = await updateBizChat(st.connId, st.chatId, { fixedText: text.slice(0, 1000), mode: "fixed", allowed: true });
     const p = chatPanel(c, ch);
-    await ctx.reply("✅ Custom reply set (is chat me automation ON + Fixed mode).\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
+    await ctx.reply("✅ Custom reply set (is chat me automation ON + Fixed mode)." + cutNote(text, 1000) + "\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
     return true;
   }
   bot.command("cancel", async (ctx) => { if (isOwner(ctx.from?.id) && (await dropAwaiting(ctx.from.id))) await ctx.reply("Cancel ho gaya."); });
