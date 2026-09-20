@@ -75,7 +75,7 @@ export function registerAdmin(bot, { mode = "polling" } = {}) {
     const wait = await ctx.reply("🩺 Models ping ho rahe hain...");
     try {
       const h = await aiHealth();
-      const lines = h.results.map((r) => r.ok ? `✅ <code>${escapeHtml(r.p)}/${escapeHtml(r.m)}</code> ${r.ms}ms` : `❌ <code>${escapeHtml(r.p)}/${escapeHtml(r.m)}</code> ${escapeHtml(r.kind)}`);
+      const lines = h.results.map((r) => r.ok ? `✅ <code>${escapeHtml(r.p)}/${escapeHtml(r.m)}</code> ${r.ms}ms` : `❌ <code>${escapeHtml(r.p)}/${escapeHtml(r.m)}</code> ${escapeHtml(r.kind)}${r.error ? " — " + escapeHtml(String(r.error).slice(0, 90)) : ""}`);
       const nc = h.notConfigured?.length ? `\n\n🔑 Key/binding missing: ${h.notConfigured.map(escapeHtml).join(", ")}` : "";
       await ctx.api.editMessageText(ctx.chat.id, wait.message_id, `🩺 <b>AI model health</b>\n\n${lines.join("\n")}${nc}`, { parse_mode: "HTML" });
     } catch (e) {
