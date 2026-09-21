@@ -24,11 +24,11 @@ export const config = {
 
   // ---- Business / Chat Automation ----
   BUSINESS_OWNERS: list(env.BUSINESS_OWNERS, [String(ADMIN_ID)]),   // sirf ye users automation use kar sakte hain
-  OWNER_NAME: env.OWNER_NAME || "Kundan",
+  OWNER_NAME: env.OWNER_NAME || "Kundan Yadav",
   // Privacy: customers ki chats free-tier providers ko jaati hain. Default me sirf ye providers.
   // Sab providers chahiye to: BIZ_PROVIDERS=all
   BIZ_PROVIDERS: env.BIZ_PROVIDERS === "all" ? [] : list(env.BIZ_PROVIDERS, ["groq", "cerebras", "cloudflare"]),
-  BIZ_MAX_REPLIES_PER_HOUR: int(env.BIZ_MAX_REPLIES_PER_HOUR, 20),
+  BIZ_MAX_REPLIES_PER_HOUR: int(env.BIZ_MAX_REPLIES_PER_HOUR, 120),   // per chat / ghanta (loop guard). Zyada chahiye to env badlo
 };
 
 export function missingConfig() {

@@ -126,7 +126,14 @@ export function registerBusiness(bot, { alert }) {
     const mode = chat.mode || conn.mode;
     if (mode === "off") return;
     if (chat.lastOwnerAt && Date.now() - new Date(chat.lastOwnerAt).getTime() < conn.pauseMin * 60_000) return;
-    if (!(await bumpWindow(`biz:${connId}:${chatId}`, config.BIZ_MAX_REPLIES_PER_HOUR, 3600_000))) return;   // hourly cap (DB)
+    if (!(await bumpWindow(`biz:${connId}:${chatId}`, config.BIZ_MAX_REPLIES_PER_HOUR, 3600_000))) {          // hourly cap (DB)
+      // pehle chup-chaap skip hota tha. Ab owner ko har chat ke liye ghante me ek baar alert.
+      const hourBucket = Math.floor(Date.now() / 3600_000);
+      if (await claimMessage(`capalert:${connId}:${chatId}:${hourBucket}`)) {
+        alert(`biz-cap:${chatId}:${hourBucket}`, `⚠️ <b>Business hourly limit</b>\nChat <code>${chatId}</code> (${escapeHtml(chat.name || "?")}) ne ${config.BIZ_MAX_REPLIES_PER_HOUR} messages/ghanta cross kar diye, AI jawab rok raha hai (agle ghante me apne aap chalu). Badhane ke liye Vercel env <code>BIZ_MAX_REPLIES_PER_HOUR</code> badlo.`);
+      }
+      return;
+    }
 
     const api = ctx.api;
     const welcomed = isFirst && !!conn.welcomeText;
