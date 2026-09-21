@@ -16,9 +16,10 @@ import { config } from "../config.js";
 import { askAI } from "../ai.js";
 import { renderChunks } from "../format.js";
 import { escapeHtml, sendSafe, errText } from "../util.js";
+import { parseKeywords, matchesTrigger } from "../triggers.js";
 import {
   upsertConnection, getConnection, getConnectionByOwner, updateConnection, claimMessage,
-  touchBizChat, markOwnerActive, claimWelcome, claimAutoReply, setAutoReplied,
+  touchBizChat, markOwnerActive, claimWelcome, claimAutoReply, claimTrigger, setAutoReplied,
   getBizChat, updateBizChat, listBizChats, pushMessage, popLast,
   markSent, wasSent, setAwaiting, takeAwaiting, dropAwaiting, bumpWindow,
 } from "../db.js";
@@ -49,7 +50,10 @@ export function registerBusiness(bot, { alert }) {
     `If something needs ${config.OWNER_NAME} personally (money, meetings, private info, decisions, commitments) say you will pass the message on and he will reply soon. ` +
     `Do not invent facts about ${config.OWNER_NAME}. Keep replies short (1-4 sentences) unless asked for detail. No markdown tables or headings.` +
     (conn.prompt ? `\n\nOwner instructions:\n${conn.prompt}` : "") +
-    (chat.prompt ? `\n\nInstructions for THIS specific customer chat (follow these for this customer):\n${chat.prompt}` : "");
+    (chat.prompt ? `\n\nInstructions for THIS specific customer chat (they override the general rules above where they conflict):\n${chat.prompt}` : "") +
+    (chat.triggerReply && chat.triggers?.length
+      ? `\n\nIMPORTANT for this customer: never connect them with ${config.OWNER_NAME}. If they ask — in any wording or language, even without exact keywords — to talk to, call, message, reach or get a reply from him, do NOT offer to pass a message and do NOT say he will reply. Refuse politely in ONE short line` + (chat.triggerRefusal ? `, using exactly this line: "${chat.triggerRefusal}"` : "") + "."
+      : "");
 
   // =====================================================================
   //  business_connection
@@ -128,6 +132,19 @@ export function registerBusiness(bot, { alert }) {
     const welcomed = isFirst && !!conn.welcomeText;
     if (welcomed) await sendPlain(api, connId, m.chat.id, conn.welcomeText);      // welcome fixed-reply cooldown consume nahi karta
 
+    // ---- Trigger reply (per chat): keyword -> owner ka exact message (AI nahi), cooldown ke saath ----
+    if (chat.triggerReply && chat.triggers?.length && matchesTrigger(m.text, chat.triggers)) {
+      if (await claimTrigger(connId, chatId, conn.cooldownMin * 60_000)) {
+        try { await sendPlain(api, connId, m.chat.id, chat.triggerReply); }                 // hu-ba-hu
+        catch (e) { await updateBizChat(connId, chatId, { lastTriggerAt: null }); throw e; }   // send fail => cooldown wapas
+        const hk = `biz:${connId}:${chatId}`;
+        await pushMessage(hk, "user", m.text, 30).catch(() => {});
+        await pushMessage(hk, "assistant", chat.triggerReply, 30).catch(() => {});       // AI ko pata rahe ki kya bheja gaya
+        return;
+      }
+      // cooldown chal raha hai: neeche AI jawab dega (refusal rule ke saath)
+    }
+
     if (mode === "fixed") {
       if (welcomed) return;                                                 // welcome hi pehla reply hai
       const text = chat.fixedText || conn.fixedText;
@@ -199,12 +216,16 @@ Automation here: <b>${on ? "ON ✅" : "OFF ⛔"}</b> ${ch.allowed == null ? "(de
 Mode: <b>${MODE_LABEL[ch.mode || ""]}</b>${ch.mode ? "" : ` → ${MODE_LABEL[c.mode]}`}
 Custom reply: ${preview(ch.fixedText)}
 AI instructions: ${preview(ch.prompt)}
+Trigger words: ${ch.triggers?.length ? escapeHtml(ch.triggers.join(", ")) : "—"}
+Trigger reply: ${preview(ch.triggerReply)}
+AI refusal line: ${preview(ch.triggerRefusal)}
 Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new Date(ch.lastOwnerAt).toLocaleString("en-IN", { timeZone: config.TIMEZONE })}` : ""}`;
     const kb = new InlineKeyboard()
       .text(`${on ? "⛔ Disable" : "✅ Enable"} here`, `biz:ct:${ch.chatId}`).row()
       .text(`🔀 Mode: ${MODE_LABEL[ch.mode || ""]}`, `biz:cm:${ch.chatId}`).row()
       .text("✏️ Set custom reply", `biz:cr:${ch.chatId}`).text("🗑 Clear reply", `biz:cx:${ch.chatId}`).row()
       .text("🧠 AI instructions", `biz:cp:${ch.chatId}`).text("🗑 Clear AI instr.", `biz:cq:${ch.chatId}`).row()
+      .text("🎯 Trigger reply", `biz:ck:${ch.chatId}`).text("🗑 Clear trigger", `biz:cn:${ch.chatId}`).row()
       .text("⬅️ Back", "biz:chats:0");
     return { text, kb };
   }
@@ -294,6 +315,13 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
       else if (act === "cm") ch = await updateBizChat(c.connId, chatId, { mode: NEXT_CHAT_MODE[ch.mode || ""] });
       else if (act === "cx") ch = await updateBizChat(c.connId, chatId, { fixedText: "", ...(ch.mode === "fixed" ? { mode: "" } : {}) });
       else if (act === "cq") ch = await updateBizChat(c.connId, chatId, { prompt: "" });
+      else if (act === "cn") ch = await updateBizChat(c.connId, chatId, { triggers: [], triggerReply: "", triggerRefusal: "", lastTriggerAt: null });
+      else if (act === "ck") {
+        await setAwaiting(ctx.from.id, c.connId, chatId, "tkeys");
+        await ctx.answerCallbackQuery();
+        await ctx.reply("🎯 Step 1/3 — Keywords bhejo (comma se alag), jaise: baat kar, call, message karne, unse baat\nCustomer ke message me inme se koi bhi aaye to tumhara exact message jaayega (cancel: /cancel).");
+        return;
+      }
       else if (act === "cp") {
         await setAwaiting(ctx.from.id, c.connId, chatId, "prompt");
         await ctx.answerCallbackQuery();
@@ -321,6 +349,31 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
     const text = ctx.msg.text.trim();
     if (/^\/?cancel$/i.test(text)) { await ctx.reply("Cancel ho gaya."); return true; }
     const c = await getConnection(st.connId);
+    if (st.kind === "tkeys") {
+      const keys = parseKeywords(text);
+      if (!keys.length) {
+        await setAwaiting(ctx.from.id, st.connId, st.chatId, "tkeys");
+        await ctx.reply("⚠️ Koi valid keyword nahi mila. Comma se alag karke bhejo, jaise: baat kar, call");
+        return true;
+      }
+      await updateBizChat(st.connId, st.chatId, { triggers: keys });
+      await setAwaiting(ctx.from.id, st.connId, st.chatId, "ttext");
+      await ctx.reply(`✅ Keywords save (${keys.length}): ${keys.join(", ")}\n\n🎯 Step 2/3 — Ab wo exact message bhejo jo bhejna hai (max 4000 characters). Last ki line (jaise "mai usse aapki baat nahi karwa sakta") isi message me daal do. (cancel: /cancel)`);
+      return true;
+    }
+    if (st.kind === "ttext") {
+      await updateBizChat(st.connId, st.chatId, { triggerReply: text.slice(0, 4000), lastTriggerAt: null });
+      await setAwaiting(ctx.from.id, st.connId, st.chatId, "trefuse");
+      await ctx.reply(`✅ Message save (${Math.min(text.length, 4000)} characters).${cutNote(text, 4000)}\n\n🎯 Step 3/3 — Ab ek chhoti refusal line bhejo (max 200 characters). Keyword na mile par bhi agar customer baat karwane jaisi request kare, ya cooldown chal raha ho, to AI sirf ye line bhejega. Jaise: mai usse aapki baat nahi karwa sakta\nSkip karne ke liye: -`);
+      return true;
+    }
+    if (st.kind === "trefuse") {
+      const line = text === "-" ? "" : text.slice(0, 200);
+      const ch = await updateBizChat(st.connId, st.chatId, { triggerRefusal: line, allowed: true });   // trigger tabhi chalta hai jab chat me automation ON ho
+      const p = chatPanel(c, ch);
+      await ctx.reply("✅ Trigger reply ready (is chat me automation ON)." + cutNote(text, 200) + "\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
+      return true;
+    }
     if (st.kind === "prompt") {
       const ch = await updateBizChat(st.connId, st.chatId, { prompt: text.slice(0, 1500) });   // mode/allowed ko nahi chhedta
       const p = chatPanel(c, ch);

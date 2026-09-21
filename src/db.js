@@ -49,6 +49,10 @@ const bizChatSchema = new Schema({
   mode: { type: String, default: "" },                // "" inherit | ai | fixed | off
   fixedText: { type: String, default: "" },
   prompt: { type: String, default: "" },              // is chat ke liye extra AI instructions
+  triggers: { type: [String], default: [] },          // keywords: inme se koi aaye to exact triggerReply jaata hai
+  triggerReply: { type: String, default: "" },
+  triggerRefusal: { type: String, default: "" },      // AI ke liye chhoti refusal line (keyword na mile par bhi)
+  lastTriggerAt: Date,
   welcomeSent: { type: Boolean, default: false },
   firstSeenAt: Date,
   lastMsgAt: Date,
@@ -197,26 +201,33 @@ export const clearSession = (key) => Session.deleteOne({ chatId: String(key) });
 
 // ---- Business connections ----
 const connCache = new Map();
+const connEpoch = new Map();          // invalidate hone par badhta hai: purani read stale value cache me wapas nahi daal sakti
+const invalidateConn = (id) => { connCache.delete(id); connEpoch.set(id, (connEpoch.get(id) || 0) + 1); };
 const cacheGet = (id) => { const c = connCache.get(id); return c && c.until > Date.now() ? c.v : undefined; };
 
 export async function upsertConnection(connId, fields) {
-  connCache.delete(connId);
-  return BusinessConnection.findOneAndUpdate(
+  invalidateConn(connId);
+  const doc = await BusinessConnection.findOneAndUpdate(
     { connId }, { $set: { ...fields, updatedAt: new Date() } },
     { upsert: true, new: true }).lean();
+  invalidateConn(connId);                                    // write ke BAAD bhi (beech me aayi read ne stale cache kiya ho sakta hai)
+  return doc;
 }
 export async function getConnection(connId) {
   const c = cacheGet(connId);
   if (c !== undefined) return c;
+  const epoch = connEpoch.get(connId) || 0;
   const v = await BusinessConnection.findOne({ connId }).lean();
-  connCache.set(connId, { v, until: Date.now() + 30000 });
+  if ((connEpoch.get(connId) || 0) === epoch) connCache.set(connId, { v, until: Date.now() + 3000 });   // 3s: serverless me alag instance ki staleness bhi chhoti
   return v;
 }
 export const getConnectionByOwner = (ownerId) =>
   BusinessConnection.findOne({ ownerId: String(ownerId), enabled: true }).sort({ updatedAt: -1 }).lean();
 export async function updateConnection(connId, patch) {
-  connCache.delete(connId);
-  return BusinessConnection.findOneAndUpdate({ connId }, { $set: { ...patch, updatedAt: new Date() } }, { new: true }).lean();
+  invalidateConn(connId);
+  const doc = await BusinessConnection.findOneAndUpdate({ connId }, { $set: { ...patch, updatedAt: new Date() } }, { new: true }).lean();
+  invalidateConn(connId);
+  return doc;
 }
 
 export async function claimMessage(key) {
@@ -255,6 +266,13 @@ export async function claimAutoReply(connId, chatId, cooldownMs) {
   const d = await BizChat.findOneAndUpdate(
     { connId, chatId: String(chatId), $or: [{ lastAutoAt: null }, { lastAutoAt: { $lt: new Date(Date.now() - cooldownMs) } }] },
     { $set: { lastAutoAt: new Date() } });
+  return !!d;
+}
+// atomic cooldown claim (trigger reply)
+export async function claimTrigger(connId, chatId, cooldownMs) {
+  const d = await BizChat.findOneAndUpdate(
+    { connId, chatId: String(chatId), $or: [{ lastTriggerAt: null }, { lastTriggerAt: { $lt: new Date(Date.now() - cooldownMs) } }] },
+    { $set: { lastTriggerAt: new Date() } });
   return !!d;
 }
 export const setAutoReplied = (connId, chatId) =>
