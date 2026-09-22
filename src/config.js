@@ -15,7 +15,7 @@ export const config = {
   WEBHOOK_SECRET: env.WEBHOOK_SECRET || "",           // Vercel/webhook mode: Telegram secret_token
 
   ADMIN_ID,
-  DAILY_LIMIT: int(env.DAILY_LIMIT, 30),
+  DAILY_LIMIT: int(env.DAILY_LIMIT, 50),
   TIMEZONE: env.TIMEZONE || "Asia/Kolkata",           // daily reset IST midnight
   FORCE_SUB_CHANNEL: (env.FORCE_SUB_CHANNEL ?? "BabuBhaiKundan").replace(/^@/, ""),
   FORCE_SUB_PHOTO: env.FORCE_SUB_PHOTO || "https://babubhaikundan.pages.dev/Assets/logo/bbk.png",

@@ -371,14 +371,14 @@ Messages seen: ${ch.msgCount || 0}${ch.lastOwnerAt ? `\nLast owner reply: ${new 
     if (st.kind === "ttext") {
       await updateBizChat(st.connId, st.chatId, { triggerReply: text.slice(0, 4000), lastTriggerAt: null });
       await setAwaiting(ctx.from.id, st.connId, st.chatId, "trefuse");
-      await ctx.reply(`✅ Message save (${Math.min(text.length, 4000)} characters).${cutNote(text, 4000)}\n\n🎯 Step 3/3 — Ab ek chhoti refusal line bhejo (max 200 characters). Keyword na mile par bhi agar customer baat karwane jaisi request kare, ya cooldown chal raha ho, to AI sirf ye line bhejega. Jaise: mai usse aapki baat nahi karwa sakta\nSkip karne ke liye: -`);
+      await ctx.reply(`✅ Message save (${Math.min(text.length, 4000)} characters).${cutNote(text, 4000)}\n\n🎯 Step 3/3 — Ab ek chhoti refusal line bhejo (max 300 characters). Keyword na mile par bhi agar customer baat karwane jaisi request kare, ya cooldown chal raha ho, to AI sirf ye line bhejega. Jaise: mai usse aapki baat nahi karwa sakta\nSkip karne ke liye: -`);
       return true;
     }
     if (st.kind === "trefuse") {
-      const line = text === "-" ? "" : text.slice(0, 200);
+      const line = text === "-" ? "" : text.slice(0, 300);
       const ch = await updateBizChat(st.connId, st.chatId, { triggerRefusal: line, allowed: true });   // trigger tabhi chalta hai jab chat me automation ON ho
       const p = chatPanel(c, ch);
-      await ctx.reply("✅ Trigger reply ready (is chat me automation ON)." + cutNote(text, 200) + "\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
+      await ctx.reply("✅ Trigger reply ready (is chat me automation ON)." + cutNote(text, 300) + "\n\n" + p.text, { parse_mode: "HTML", reply_markup: p.kb });
       return true;
     }
     if (st.kind === "prompt") {
